@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Tulacraft{% endblock %}</title>
     <link rel="manifest" href="/static/manifest.json">
-    <meta name="theme-color" content="#6f42c1">
+    <meta name="theme-color" content="#2D6A4F">
     <link rel="apple-touch-icon" href="/static/icons/icon-512.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
@@ -18,6 +18,29 @@
         .badge-status-new { background-color: #0dcaf0; }
         .badge-status-contacted { background-color: #ffc107; color: #000; }
         .badge-status-confirmed { background-color: #198754; }
+
+        /* PWA: touch targets — Material/Apple HIG minimums on touch devices. */
+        @media (pointer: coarse) {
+            .btn { min-height: 48px; }
+            .btn.btn-sm { min-height: 44px; }
+            .nav-link { min-height: 48px; display: inline-flex; align-items: center; }
+            .form-control, .form-select { min-height: 48px; }
+            .form-control-sm, .form-select-sm { min-height: 40px; }
+            .navbar-toggler { min-height: 48px; min-width: 48px; }
+            .btn-close { min-height: 44px; min-width: 44px; }
+        }
+
+        /* PWA install banner */
+        #pwaInstallBanner {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: #2D6A4F; color: white;
+            padding: 12px 16px;
+            display: none;
+            z-index: 1050;
+            box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+        }
+        #pwaInstallBanner.show { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        #pwaInstallBanner .pwa-msg { flex: 1; min-width: 200px; }
     </style>
 </head>
 <body>
@@ -98,7 +121,99 @@
     {% block content %}{% endblock %}
 </div>
 
+<div id="pwaInstallBanner" role="dialog" aria-live="polite">
+    <div class="pwa-msg">
+        <strong><i class="bi bi-phone"></i> Install Tulacraft</strong>
+        <div class="small">Add to your home screen for one-tap access.</div>
+    </div>
+    <button type="button" class="btn btn-light btn-sm" id="pwaInstallBtn">
+        <i class="bi bi-download"></i> Install
+    </button>
+    <button type="button" class="btn btn-outline-light btn-sm" id="pwaDismissBtn" aria-label="Dismiss">
+        Not now
+    </button>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// PWA: service worker registration
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').catch(function(err) {
+            console.warn('SW registration failed:', err);
+        });
+    });
+}
+
+// PWA: install prompt logic
+(function() {
+    const KEY_VISITS = 'tula_visits';
+    const KEY_DISMISSED = 'pwa_install_dismissed';
+
+    // Increment visit count once per page load.
+    let visits = 0;
+    try {
+        visits = parseInt(localStorage.getItem(KEY_VISITS) || '0', 10) + 1;
+        localStorage.setItem(KEY_VISITS, String(visits));
+    } catch (_) {}
+
+    let deferredPrompt = null;
+    const banner = document.getElementById('pwaInstallBanner');
+    const installBtn = document.getElementById('pwaInstallBtn');
+    const dismissBtn = document.getElementById('pwaDismissBtn');
+
+    function shouldShowBanner() {
+        if (!banner) return false;
+        try {
+            if (localStorage.getItem(KEY_DISMISSED) === 'true') return false;
+        } catch (_) {}
+        if (visits < 2) return false;
+        return true;
+    }
+
+    function showBanner() {
+        if (shouldShowBanner()) banner.classList.add('show');
+    }
+
+    function hideBanner() {
+        if (banner) banner.classList.remove('show');
+    }
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        showBanner();
+    });
+
+    if (installBtn) {
+        installBtn.addEventListener('click', async function() {
+            if (!deferredPrompt) { hideBanner(); return; }
+            deferredPrompt.prompt();
+            try {
+                const choice = await deferredPrompt.userChoice;
+                if (choice && choice.outcome === 'accepted') {
+                    try { localStorage.setItem(KEY_DISMISSED, 'true'); } catch (_) {}
+                }
+            } catch (_) {}
+            deferredPrompt = null;
+            hideBanner();
+        });
+    }
+
+    if (dismissBtn) {
+        dismissBtn.addEventListener('click', function() {
+            try { localStorage.setItem(KEY_DISMISSED, 'true'); } catch (_) {}
+            hideBanner();
+        });
+    }
+
+    window.addEventListener('appinstalled', function() {
+        try { localStorage.setItem(KEY_DISMISSED, 'true'); } catch (_) {}
+        hideBanner();
+        deferredPrompt = null;
+    });
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
