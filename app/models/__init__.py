@@ -132,6 +132,33 @@ class Lead(db.Model):
     messages = db.relationship("Message", backref="lead", lazy=True)
 
 
+class VerificationStatus(db.Model):
+    """Per-producer per-document-type KYC verification record.
+
+    PII rule: `masked_number` stores ONLY the last 4 digits of the ID
+    (e.g. 'XXXXXX234F'). Full PAN / Aadhaar / GSTIN is never persisted.
+    """
+
+    __tablename__ = "verification_status"
+
+    DOC_TYPES = ("pan", "gst", "aadhaar", "iec")
+    STATUSES = ("pending", "verified", "failed")
+
+    id = db.Column(db.Integer, primary_key=True)
+    producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"), nullable=False, index=True)
+    doc_type = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    masked_number = db.Column(db.String(40))
+    verified_name = db.Column(db.String(200))
+    verified_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("producer_id", "doc_type", name="uq_verification_producer_doc"),
+    )
+
+
 class Message(db.Model):
     __tablename__ = "messages"
 

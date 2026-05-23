@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Get Verified — Tulacraft{% endblock %}
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="bi bi-shield-check text-success"></i> Get Verified</h2>
+        <p class="text-muted mb-0">Earn trust badges visible to buyers. Each badge is verified with government IDs via our partner Digio.</p>
+    </div>
+    <div class="col-auto">
+        <a href="{{ url_for('producer.dashboard') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    {% for tier in tiers %}
+    <div class="col-12 col-sm-6 col-lg-3">
+        <div class="card h-100 p-3">
+            <h5 class="mb-1">{{ tier.name }}</h5>
+            <div class="fs-3 fw-bold text-primary mb-2">₹{{ tier.price_inr }}</div>
+            <ul class="small text-muted ps-3 mb-2">
+                {% for item in tier.includes %}
+                <li>{{ item }} verification</li>
+                {% endfor %}
+            </ul>
+            <small class="text-muted"><em>Payment gate coming with Razorpay. For now, verify directly below.</em></small>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="row g-4">
+    <div class="col-12 col-md-6">
+        <div class="card p-3">
+            <h5 class="mb-2"><i class="bi bi-card-text"></i> PAN
+                {% set pan = verifications.get('pan') %}
+                {% if pan and pan.status == 'verified' %}
+                <span class="badge bg-success ms-2"><i class="bi bi-patch-check-fill"></i> Verified</span>
+                {% elif pan and pan.status == 'failed' %}
+                <span class="badge bg-danger ms-2">Failed</span>
+                {% endif %}
+            </h5>
+            {% if pan and pan.masked_number %}
+            <p class="small text-muted mb-2">On file: <code>{{ pan.masked_number }}</code>
+                {% if pan.verified_name %} — {{ pan.verified_name }}{% endif %}
+            </p>
+            {% endif %}
+            <div class="input-group">
+                <input type="text" id="panInput" class="form-control" placeholder="ABCDE1234F" maxlength="10" autocomplete="off">
+                <button type="button" class="btn btn-success" id="verifyPanBtn">
+                    <i class="bi bi-shield-check"></i> Verify
+                </button>
+            </div>
+            <div id="panStatus" class="small mt-2 d-none"></div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-6">
+        <div class="card p-3">
+            <h5 class="mb-2"><i class="bi bi-building"></i> GST
+                {% set gst = verifications.get('gst') %}
+                {% if gst and gst.status == 'verified' %}
+                <span class="badge bg-success ms-2"><i class="bi bi-patch-check-fill"></i> Verified</span>
+                {% elif gst and gst.status == 'failed' %}
+                <span class="badge bg-danger ms-2">Failed</span>
+                {% endif %}
+            </h5>
+            {% if gst and gst.masked_number %}
+            <p class="small text-muted mb-2">On file: <code>{{ gst.masked_number }}</code>
+                {% if gst.verified_name %} — {{ gst.verified_name }}{% endif %}
+            </p>
+            {% endif %}
+            <div class="input-group">
+                <input type="text" id="gstInput" class="form-control" placeholder="22ABCDE1234F1Z5" maxlength="15" autocomplete="off">
+                <button type="button" class="btn btn-success" id="verifyGstBtn">
+                    <i class="bi bi-shield-check"></i> Verify
+                </button>
+            </div>
+            <div id="gstStatus" class="small mt-2 d-none"></div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-6">
+        <div class="card p-3 bg-light">
+            <h5 class="mb-2 text-muted"><i class="bi bi-person-vcard"></i> Aadhaar
+                <span class="badge bg-secondary ms-2">Coming soon</span>
+            </h5>
+            <p class="small text-muted mb-0">Aadhaar OTP verification ships in the next update.</p>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-6">
+        <div class="card p-3 bg-light">
+            <h5 class="mb-2 text-muted"><i class="bi bi-globe2"></i> IEC (Importer-Exporter Code)
+                <span class="badge bg-secondary ms-2">Coming soon</span>
+            </h5>
+            <p class="small text-muted mb-0">For sellers exporting handmade goods internationally.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setStatus(el, msg, kind) {
+    el.textContent = msg;
+    el.className = 'small mt-2 text-' + (kind || 'muted');
+    el.classList.remove('d-none');
+}
+
+async function postJson(url, body) {
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    return { ok: resp.ok, status: resp.status, data: await resp.json() };
+}
+
+(function() {
+    const panBtn = document.getElementById('verifyPanBtn');
+    const panInput = document.getElementById('panInput');
+    const panStatus = document.getElementById('panStatus');
+
+    panBtn.addEventListener('click', async function() {
+        const pan = (panInput.value || '').trim().toUpperCase();
+        if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) {
+            setStatus(panStatus, 'PAN must be 5 letters + 4 digits + 1 letter.', 'danger');
+            return;
+        }
+        const original = panBtn.innerHTML;
+        panBtn.disabled = true;
+        panBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        setStatus(panStatus, 'Verifying with Digio...', 'muted');
+        try {
+            const r = await postJson('{{ url_for("producer.verify_pan") }}', { pan: pan });
+            if (!r.ok) {
+                setStatus(panStatus, r.data.error || ('HTTP ' + r.status), 'danger');
+            } else if (r.data.valid) {
+                setStatus(panStatus, 'Verified' + (r.data.name ? ' — ' + r.data.name : '') + '. Reloading...', 'success');
+                setTimeout(function() { window.location.reload(); }, 900);
+            } else {
+                setStatus(panStatus, 'Could not verify this PAN.', 'danger');
+            }
+        } catch (e) {
+            setStatus(panStatus, 'Network error: ' + e.message, 'danger');
+        } finally {
+            panBtn.disabled = false;
+            panBtn.innerHTML = original;
+        }
+    });
+
+    const gstBtn = document.getElementById('verifyGstBtn');
+    const gstInput = document.getElementById('gstInput');
+    const gstStatus = document.getElementById('gstStatus');
+
+    gstBtn.addEventListener('click', async function() {
+        const gstin = (gstInput.value || '').trim().toUpperCase();
+        if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(gstin)) {
+            setStatus(gstStatus, 'GSTIN format invalid (expected 15 chars).', 'danger');
+            return;
+        }
+        const original = gstBtn.innerHTML;
+        gstBtn.disabled = true;
+        gstBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        setStatus(gstStatus, 'Verifying with Digio...', 'muted');
+        try {
+            const r = await postJson('{{ url_for("producer.verify_gst") }}', { gstin: gstin });
+            if (!r.ok) {
+                setStatus(gstStatus, r.data.error || ('HTTP ' + r.status), 'danger');
+            } else if (r.data.valid) {
+                setStatus(gstStatus, 'Verified' + (r.data.business_name ? ' — ' + r.data.business_name : '') + '. Reloading...', 'success');
+                setTimeout(function() { window.location.reload(); }, 900);
+            } else {
+                setStatus(gstStatus, 'Could not verify this GSTIN.', 'danger');
+            }
+        } catch (e) {
+            setStatus(gstStatus, 'Network error: ' + e.message, 'danger');
+        } finally {
+            gstBtn.disabled = false;
+            gstBtn.innerHTML = original;
+        }
+    });
+})();
+</script>
+{% endblock %}
