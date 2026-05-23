@@ -26,11 +26,40 @@ logger = logging.getLogger(__name__)
 
 PAN_REGEX = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 GSTIN_REGEX = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$")
+AADHAAR_REGEX = re.compile(r"^[0-9]{12}$")
+OTP_REGEX = re.compile(r"^[0-9]{4,8}$")
 
 # Digio v3 KYC endpoints. Re-verify against current Digio docs before
 # going live; if Digio updates a path, change here only.
 _PAN_PATH = "/v3/client/kyc/pan_basic/{client_ref_id}"
 _GST_PATH = "/v3/client/kyc/business_data/gstin_search/{client_ref_id}"
+_AADHAAR_OTP_SEND_PATH = "/v3/client/kyc/aadhaar/{client_ref_id}"
+_AADHAAR_OTP_VERIFY_PATH = "/v3/client/kyc/aadhaar/{ref_id}/otp"
+
+# Verhoeff tables — used to validate Aadhaar checksum locally before
+# spending a Digio API call on an obviously invalid number.
+_VERHOEFF_D = (
+    (0,1,2,3,4,5,6,7,8,9),
+    (1,2,3,4,0,6,7,8,9,5),
+    (2,3,4,0,1,7,8,9,5,6),
+    (3,4,0,1,2,8,9,5,6,7),
+    (4,0,1,2,3,9,5,6,7,8),
+    (5,9,8,7,6,0,4,3,2,1),
+    (6,5,9,8,7,1,0,4,3,2),
+    (7,6,5,9,8,2,1,0,4,3),
+    (8,7,6,5,9,3,2,1,0,4),
+    (9,8,7,6,5,4,3,2,1,0),
+)
+_VERHOEFF_P = (
+    (0,1,2,3,4,5,6,7,8,9),
+    (1,5,7,6,2,8,3,0,9,4),
+    (5,8,0,3,7,9,6,1,4,2),
+    (8,9,1,6,0,4,3,5,2,7),
+    (9,4,5,3,1,2,6,8,7,0),
+    (4,2,8,6,5,7,3,9,0,1),
+    (2,7,9,3,8,0,6,4,1,5),
+    (7,0,4,6,9,1,3,2,5,8),
+)
 
 _REQUEST_TIMEOUT_SECONDS = 15
 
@@ -105,6 +134,59 @@ def verify_gst(gstin: str) -> dict:
     return {"valid": bool(valid), "business_name": business_name or ""}
 
 
+def is_valid_aadhaar(aadhaar: str) -> bool:
+    """Validate Aadhaar format (12 digits) AND Verhoeff checksum."""
+    if not aadhaar:
+        return False
+    cleaned = re.sub(r"\s+", "", aadhaar.strip())
+    if not AADHAAR_REGEX.match(cleaned):
+        return False
+    return _verhoeff_valid(cleaned)
+
+
+def is_valid_otp(otp: str) -> bool:
+    return bool(otp and OTP_REGEX.match(otp.strip()))
+
+
+def aadhaar_send_otp(aadhaar_number: str) -> dict:
+    """Trigger an OTP to the Aadhaar-registered mobile via Digio.
+
+    Returns `{ref_id: str}`. The full Aadhaar number is sent to Digio
+    in-memory only and is NEVER persisted, logged, or echoed back.
+    """
+    cleaned = re.sub(r"\s+", "", (aadhaar_number or "").strip())
+    if not is_valid_aadhaar(cleaned):
+        raise ValueError("Aadhaar must be 12 digits with a valid checksum")
+
+    response = _post(
+        _AADHAAR_OTP_SEND_PATH.format(client_ref_id=_new_client_ref_id()),
+        body={"aadhaar_number": cleaned},
+    )
+
+    ref_id = _extract_ref_id(response)
+    if not ref_id:
+        raise DigioVerificationError("Digio did not return a reference id")
+    return {"ref_id": ref_id}
+
+
+def aadhaar_verify_otp(ref_id: str, otp: str) -> dict:
+    """Confirm Aadhaar via the OTP previously sent. Returns `{valid, name}`."""
+    if not ref_id:
+        raise ValueError("ref_id is required")
+    cleaned_otp = (otp or "").strip()
+    if not is_valid_otp(cleaned_otp):
+        raise ValueError("OTP must be 4-8 digits")
+
+    response = _post(
+        _AADHAAR_OTP_VERIFY_PATH.format(ref_id=ref_id),
+        body={"otp": cleaned_otp},
+    )
+
+    valid = _is_success(response)
+    name = _extract_name(response)
+    return {"valid": bool(valid), "name": name or ""}
+
+
 # -- internals ----------------------------------------------------------------
 
 
@@ -173,3 +255,21 @@ def _extract_business_name(response: dict) -> Optional[str]:
         or response.get("business_name")
         or response.get("legal_name")
     )
+
+
+def _extract_ref_id(response: dict) -> Optional[str]:
+    """Digio commonly returns the reference id as `id` or `reference_id`."""
+    return (
+        response.get("reference_id")
+        or response.get("ref_id")
+        or response.get("id")
+        or (response.get("data") or {}).get("ref_id")
+    )
+
+
+def _verhoeff_valid(number: str) -> bool:
+    """Standard Verhoeff checksum — required for valid Aadhaar."""
+    c = 0
+    for i, digit in enumerate(reversed(number)):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[i % 8][int(digit)]]
+    return c == 0

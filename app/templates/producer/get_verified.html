@@ -82,11 +82,48 @@
     </div>
 
     <div class="col-12 col-md-6">
-        <div class="card p-3 bg-light">
-            <h5 class="mb-2 text-muted"><i class="bi bi-person-vcard"></i> Aadhaar
-                <span class="badge bg-secondary ms-2">Coming soon</span>
+        <div class="card p-3">
+            <h5 class="mb-2"><i class="bi bi-person-vcard"></i> Aadhaar
+                {% set aadhaar = verifications.get('aadhaar') %}
+                {% if aadhaar and aadhaar.status == 'verified' %}
+                <span class="badge bg-success ms-2"><i class="bi bi-patch-check-fill"></i> Verified</span>
+                {% elif aadhaar and aadhaar.status == 'failed' %}
+                <span class="badge bg-danger ms-2">Failed</span>
+                {% endif %}
             </h5>
-            <p class="small text-muted mb-0">Aadhaar OTP verification ships in the next update.</p>
+            {% if aadhaar and aadhaar.masked_number %}
+            <p class="small text-muted mb-2">On file: <code>{{ aadhaar.masked_number }}</code>
+                {% if aadhaar.verified_name %} — {{ aadhaar.verified_name }}{% endif %}
+            </p>
+            {% endif %}
+
+            <div id="aadhaarStep1">
+                <label class="form-label small mb-1">Aadhaar number (12 digits)</label>
+                <div class="input-group">
+                    <input type="text" id="aadhaarInput" class="form-control" inputmode="numeric"
+                           pattern="[0-9]*" maxlength="12" autocomplete="off" placeholder="XXXX XXXX XXXX">
+                    <button type="button" class="btn btn-primary" id="aadhaarSendOtpBtn">
+                        <i class="bi bi-send"></i> Send OTP
+                    </button>
+                </div>
+                <small class="text-muted">An OTP will be sent to your Aadhaar-registered mobile number.</small>
+            </div>
+
+            <div id="aadhaarStep2" class="d-none mt-2">
+                <label class="form-label small mb-1">Enter OTP</label>
+                <div class="input-group">
+                    <input type="text" id="aadhaarOtpInput" class="form-control" inputmode="numeric"
+                           pattern="[0-9]*" maxlength="8" autocomplete="one-time-code" placeholder="6-digit OTP">
+                    <button type="button" class="btn btn-success" id="aadhaarVerifyBtn">
+                        <i class="bi bi-shield-check"></i> Verify
+                    </button>
+                </div>
+                <button type="button" class="btn btn-link btn-sm p-0 mt-1" id="aadhaarResetBtn">
+                    Use a different Aadhaar
+                </button>
+            </div>
+
+            <div id="aadhaarStatus" class="small mt-2 d-none"></div>
         </div>
     </div>
 
@@ -182,6 +219,98 @@ async function postJson(url, body) {
             gstBtn.innerHTML = original;
         }
     });
+})();
+
+// Aadhaar OTP flow
+(function() {
+    const step1 = document.getElementById('aadhaarStep1');
+    const step2 = document.getElementById('aadhaarStep2');
+    const sendBtn = document.getElementById('aadhaarSendOtpBtn');
+    const verifyBtn = document.getElementById('aadhaarVerifyBtn');
+    const resetBtn = document.getElementById('aadhaarResetBtn');
+    const aadhaarInput = document.getElementById('aadhaarInput');
+    const otpInput = document.getElementById('aadhaarOtpInput');
+    const statusEl = document.getElementById('aadhaarStatus');
+    if (!sendBtn || !verifyBtn) return;
+
+    function setAadhaarStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'small mt-2 text-' + (kind || 'muted');
+        statusEl.classList.remove('d-none');
+    }
+
+    function resetFlow() {
+        step1.classList.remove('d-none');
+        step2.classList.add('d-none');
+        aadhaarInput.value = '';
+        otpInput.value = '';
+        statusEl.classList.add('d-none');
+    }
+
+    sendBtn.addEventListener('click', async function() {
+        const aadhaar = (aadhaarInput.value || '').replace(/\s+/g, '');
+        if (!/^[0-9]{12}$/.test(aadhaar)) {
+            setAadhaarStatus('Aadhaar must be 12 digits.', 'danger');
+            return;
+        }
+        const original = sendBtn.innerHTML;
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        setAadhaarStatus('Sending OTP via Digio...', 'muted');
+        try {
+            const r = await postJson('{{ url_for("producer.aadhaar_send_otp") }}',
+                                     { aadhaar_number: aadhaar });
+            if (!r.ok) {
+                setAadhaarStatus(r.data.error || ('HTTP ' + r.status), 'danger');
+            } else {
+                setAadhaarStatus('OTP sent. Check your Aadhaar-registered mobile.', 'success');
+                step1.classList.add('d-none');
+                step2.classList.remove('d-none');
+                // Clear the Aadhaar number from the DOM as soon as the OTP is sent.
+                aadhaarInput.value = '';
+                otpInput.focus();
+            }
+        } catch (e) {
+            setAadhaarStatus('Network error: ' + e.message, 'danger');
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = original;
+        }
+    });
+
+    verifyBtn.addEventListener('click', async function() {
+        const otp = (otpInput.value || '').trim();
+        if (!/^[0-9]{4,8}$/.test(otp)) {
+            setAadhaarStatus('OTP must be 4-8 digits.', 'danger');
+            return;
+        }
+        const original = verifyBtn.innerHTML;
+        verifyBtn.disabled = true;
+        verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        setAadhaarStatus('Verifying OTP with Digio...', 'muted');
+        try {
+            const r = await postJson('{{ url_for("producer.aadhaar_verify_otp") }}',
+                                     { otp: otp });
+            if (!r.ok) {
+                setAadhaarStatus(r.data.error || ('HTTP ' + r.status), 'danger');
+                // Failure usually invalidates the ref_id — drop back to step 1.
+                if (r.status === 400 || r.status === 502) resetFlow();
+            } else if (r.data.valid) {
+                setAadhaarStatus('Verified' + (r.data.name ? ' — ' + r.data.name : '') + '. Reloading...', 'success');
+                setTimeout(function() { window.location.reload(); }, 900);
+            } else {
+                setAadhaarStatus('Could not verify Aadhaar.', 'danger');
+                resetFlow();
+            }
+        } catch (e) {
+            setAadhaarStatus('Network error: ' + e.message, 'danger');
+        } finally {
+            verifyBtn.disabled = false;
+            verifyBtn.innerHTML = original;
+        }
+    });
+
+    if (resetBtn) resetBtn.addEventListener('click', resetFlow);
 })();
 </script>
 {% endblock %}
