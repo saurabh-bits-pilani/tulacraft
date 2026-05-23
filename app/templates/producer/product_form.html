@@ -32,6 +32,11 @@
                         <button type="button" class="btn btn-sm btn-outline-danger d-none" id="stopVoice">
                             <i class="bi bi-stop-circle"></i> Stop
                         </button>
+                        <span id="recordingIndicator" class="d-none align-items-center gap-2">
+                            <span class="recording-dot" aria-hidden="true"></span>
+                            <span class="small text-danger fw-bold">REC</span>
+                            <span id="recordingTimer" class="small text-muted">0:00</span>
+                        </span>
                         <button type="button" class="btn btn-sm btn-outline-primary" id="btnElegant">
                             <i class="bi bi-suit-heart"></i> Elegant
                         </button>
@@ -43,6 +48,22 @@
                         </button>
                         <span id="voiceStatus" class="text-muted ms-1 small"></span>
                     </div>
+                    <style>
+                        .recording-dot {
+                            display: inline-block;
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 50%;
+                            background: #dc3545;
+                            animation: rec-pulse 1s ease-in-out infinite;
+                        }
+                        @keyframes rec-pulse {
+                            0%, 100% { opacity: 1; transform: scale(1); }
+                            50%      { opacity: 0.4; transform: scale(1.3); }
+                        }
+                        #recordingIndicator { display: none; }
+                        #recordingIndicator.active { display: inline-flex !important; }
+                    </style>
 
                     <div id="marketingResult" class="d-none mt-3"></div>
                 </div>
@@ -326,13 +347,17 @@ function updateSizesPlaceholder() {
 categorySelect.addEventListener('change', updateSizesPlaceholder);
 updateSizesPlaceholder();
 
-// Voice input
+// Voice input — branches: Indian languages -> Sarvam STT, others -> Web Speech API
 const startBtn = document.getElementById('startVoice');
 const stopBtn = document.getElementById('stopVoice');
 const status = document.getElementById('voiceStatus');
 const descField = document.getElementById('description');
+const recIndicator = document.getElementById('recordingIndicator');
+const recTimer = document.getElementById('recordingTimer');
 
-const producerLang = '{{ current_user.language }}';
+const producerLang = '{{ seller_language or current_user.language }}';
+const isSellerIndian = {{ 'true' if is_seller_indian else 'false' }};
+
 const langMap = {
     'sr': 'sr-RS', 'de': 'de-DE', 'fr': 'fr-FR', 'es': 'es-ES',
     'it': 'it-IT', 'pt': 'pt-PT', 'ar': 'ar-SA', 'ja': 'ja-JP',
@@ -340,7 +365,111 @@ const langMap = {
     'sw': 'sw-KE', 'tr': 'tr-TR', 'en': 'en-US', 'mk': 'mk-MK'
 };
 
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+let recordingStart = 0;
+let timerInterval = null;
+
+function showRecording() {
+    recIndicator.classList.add('active');
+    recordingStart = Date.now();
+    recTimer.textContent = '0:00';
+    timerInterval = setInterval(function() {
+        const elapsed = Math.floor((Date.now() - recordingStart) / 1000);
+        const m = Math.floor(elapsed / 60);
+        const s = (elapsed % 60).toString().padStart(2, '0');
+        recTimer.textContent = m + ':' + s;
+    }, 250);
+}
+
+function hideRecording() {
+    recIndicator.classList.remove('active');
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function checkSourceLanguageCheckbox() {
+    const langCheckbox = document.getElementById('lang_' + producerLang);
+    if (langCheckbox && !langCheckbox.checked) {
+        langCheckbox.checked = true;
+        status.textContent += ' — "' + producerLang.toUpperCase() + '" checked as source language.';
+    }
+}
+
+if (isSellerIndian) {
+    // Sarvam STT path: record with MediaRecorder, POST to backend.
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+        startBtn.style.display = 'none';
+        status.textContent = 'Voice input requires a modern browser with mic access.';
+    } else {
+        let mediaRecorder = null;
+        let chunks = [];
+        let stream = null;
+
+        const pickMime = function() {
+            const options = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+            for (const m of options) {
+                if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+            }
+            return '';
+        };
+
+        startBtn.addEventListener('click', async function() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err) {
+                status.textContent = 'Microphone permission denied.';
+                return;
+            }
+            chunks = [];
+            const mimeType = pickMime();
+            mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType: mimeType }) : new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = function(e) { if (e.data && e.data.size > 0) chunks.push(e.data); };
+            mediaRecorder.onstop = async function() {
+                hideRecording();
+                stream.getTracks().forEach(function(t) { t.stop(); });
+                const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                if (blob.size === 0) {
+                    status.textContent = 'No audio captured — try again.';
+                    startBtn.classList.remove('d-none');
+                    stopBtn.classList.add('d-none');
+                    return;
+                }
+                status.textContent = 'Transcribing with Sarvam...';
+                const form = new FormData();
+                const ext = (blob.type.indexOf('mp4') >= 0) ? 'mp4' : (blob.type.indexOf('ogg') >= 0) ? 'ogg' : 'webm';
+                form.append('audio', blob, 'voice.' + ext);
+                form.append('language', producerLang);
+                try {
+                    const resp = await fetch('{{ url_for("producer.transcribe_voice") }}', {
+                        method: 'POST',
+                        body: form,
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        status.textContent = 'Transcription error: ' + (data.error || ('HTTP ' + resp.status));
+                    } else {
+                        descField.value = (descField.value ? (descField.value + ' ') : '') + (data.transcript || '');
+                        status.textContent = 'Done! Edit text if needed.';
+                        checkSourceLanguageCheckbox();
+                    }
+                } catch (err) {
+                    status.textContent = 'Network error: ' + err.message;
+                } finally {
+                    startBtn.classList.remove('d-none');
+                    stopBtn.classList.add('d-none');
+                }
+            };
+            mediaRecorder.start();
+            status.textContent = 'Recording in ' + producerLang.toUpperCase() + '... click Stop when done.';
+            startBtn.classList.add('d-none');
+            stopBtn.classList.remove('d-none');
+            showRecording();
+        });
+
+        stopBtn.addEventListener('click', function() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        });
+    }
+} else if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    // Existing Web Speech API path for non-Indian languages.
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -352,6 +481,7 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         status.textContent = 'Listening... speak now';
         startBtn.classList.add('d-none');
         stopBtn.classList.remove('d-none');
+        showRecording();
     });
 
     stopBtn.addEventListener('click', () => recognition.stop());
@@ -365,18 +495,15 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     };
 
     recognition.onend = () => {
+        hideRecording();
         status.textContent = 'Done! Edit text if needed.';
         startBtn.classList.remove('d-none');
         stopBtn.classList.add('d-none');
-        // Auto-check the source language checkbox
-        const langCheckbox = document.getElementById('lang_' + producerLang);
-        if (langCheckbox && !langCheckbox.checked) {
-            langCheckbox.checked = true;
-            status.textContent += ' — "' + producerLang.toUpperCase() + '" checked as source language.';
-        }
+        checkSourceLanguageCheckbox();
     };
 
     recognition.onerror = (e) => {
+        hideRecording();
         status.textContent = 'Error: ' + e.error + ' - try typing instead.';
         startBtn.classList.remove('d-none');
         stopBtn.classList.add('d-none');
