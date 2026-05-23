@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import Producer, Product, Lead, Message
-from app.services import gemma
+from app.services import gemma, pricing, exchange_rate
 import os
 import cloudinary
 import cloudinary.uploader
@@ -268,6 +268,33 @@ def translate_marketing_one():
         return jsonify({"lang": lang, "text": translated})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@producer_bp.route("/suggest-price", methods=["POST"])
+@login_required
+def suggest_price():
+    data = request.get_json(silent=True) or {}
+    try:
+        material_cost = float(data.get("material_cost", 0))
+        hours_spent = float(data.get("hours_spent", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "material_cost and hours_spent must be numbers"}), 400
+
+    craft_category = (data.get("craft_category") or "").strip()
+    if material_cost <= 0 or hours_spent <= 0 or not craft_category:
+        return jsonify({
+            "error": "material_cost > 0, hours_spent > 0, and craft_category are required"
+        }), 400
+
+    try:
+        tiers = pricing.suggest_prices(material_cost, hours_spent, craft_category)
+    except Exception as exc:
+        return jsonify({"error": f"price suggestion failed: {exc}"}), 502
+
+    return jsonify({
+        "tiers": [t.to_dict() for t in tiers],
+        "inr_to_usd_rate": exchange_rate.get_rate(),
+    })
 
 
 @producer_bp.route("/messages/<int:lead_id>", methods=["GET", "POST"])

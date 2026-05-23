@@ -50,14 +50,15 @@
                 <div class="row">
                     <div class="col-md-4 mb-3">
                         <label class="form-label fw-bold">Price</label>
-                        <input type="number" name="price" class="form-control" step="0.01" placeholder="0.00">
+                        <input type="number" name="price" id="priceInput" class="form-control" step="0.01" placeholder="0.00">
                     </div>
                     <div class="col-md-4 mb-3">
                         <label class="form-label fw-bold">Currency</label>
-                        <select name="currency" class="form-select">
+                        <select name="currency" id="currencySelect" class="form-select">
                             <option value="EUR">EUR €</option>
                             <option value="USD">USD $</option>
                             <option value="GBP">GBP £</option>
+                            <option value="INR">INR ₹</option>
                             <option value="RSD">RSD</option>
                         </select>
                     </div>
@@ -72,6 +73,36 @@
                             <option>Jewelry</option>
                             <option>Other</option>
                         </select>
+                    </div>
+                </div>
+
+                <div class="card border-info mb-4">
+                    <div class="card-body">
+                        <h6 class="card-title mb-2">
+                            <i class="bi bi-magic"></i> Not sure how to price?
+                            <small class="text-muted fw-normal">— Gemma will suggest three tiers</small>
+                        </h6>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-sm-4">
+                                <label class="form-label small mb-1">Material cost (INR)</label>
+                                <input type="number" id="suggestMaterialCost" class="form-control form-control-sm" step="0.01" min="0" placeholder="e.g. 200">
+                            </div>
+                            <div class="col-sm-3">
+                                <label class="form-label small mb-1">Hours of work</label>
+                                <input type="number" id="suggestHoursSpent" class="form-control form-control-sm" step="0.25" min="0" placeholder="e.g. 3">
+                            </div>
+                            <div class="col-sm-3">
+                                <label class="form-label small mb-1">Craft category</label>
+                                <input type="text" id="suggestCraftCategory" class="form-control form-control-sm" placeholder="e.g. pottery">
+                            </div>
+                            <div class="col-sm-2">
+                                <button type="button" id="suggestPriceBtn" class="btn btn-info btn-sm w-100">
+                                    <i class="bi bi-stars"></i> Suggest
+                                </button>
+                            </div>
+                        </div>
+                        <div id="suggestStatus" class="small text-muted mt-2 d-none"></div>
+                        <div id="suggestResults" class="row g-2 mt-2 d-none"></div>
                     </div>
                 </div>
 
@@ -385,5 +416,104 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     startBtn.style.display = 'none';
     status.textContent = 'Voice input requires Chrome browser.';
 }
+
+// Price suggestion
+(function() {
+    const btn = document.getElementById('suggestPriceBtn');
+    if (!btn) return;
+    const statusEl = document.getElementById('suggestStatus');
+    const results = document.getElementById('suggestResults');
+    const priceInput = document.getElementById('priceInput');
+    const currencySelect = document.getElementById('currencySelect');
+    const categorySelect = document.getElementById('categorySelect');
+    const craftInput = document.getElementById('suggestCraftCategory');
+
+    if (categorySelect) {
+        categorySelect.addEventListener('change', function() {
+            if (!craftInput.value) craftInput.value = categorySelect.value;
+        });
+    }
+
+    function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'small mt-2 ' + (isError ? 'text-danger' : 'text-muted');
+        statusEl.classList.remove('d-none');
+    }
+
+    function renderTiers(tiers, rate) {
+        results.innerHTML = '';
+        const order = ['budget', 'standard', 'premium'];
+        const colour = { budget: 'success', standard: 'primary', premium: 'warning' };
+        order.forEach(function(name) {
+            const t = tiers.find(function(x) { return x.tier === name; });
+            if (!t) return;
+            const col = document.createElement('div');
+            col.className = 'col-12 col-md-4';
+            const usdLine = t.price_usd != null ? '<small class="text-muted d-block">≈ $' + t.price_usd.toFixed(2) + ' USD</small>' : '';
+            col.innerHTML =
+                '<button type="button" class="card w-100 text-start p-2 border-' + colour[name] + ' suggest-pick" ' +
+                'data-price="' + t.price_inr + '">' +
+                '<div class="fw-bold text-' + colour[name] + ' text-capitalize">' + name + '</div>' +
+                '<div class="fs-5 fw-bold">₹ ' + t.price_inr.toLocaleString('en-IN') + '</div>' +
+                usdLine +
+                '<small class="d-block mt-1">' + t.reason + '</small>' +
+                '</button>';
+            results.appendChild(col);
+        });
+        const note = document.createElement('div');
+        note.className = 'col-12 small text-muted mt-1';
+        note.textContent = 'Click a tier to fill the price (currency will switch to INR).' + (rate ? ' Rate: 1 INR ≈ $' + rate.toFixed(4) : '');
+        results.appendChild(note);
+        results.classList.remove('d-none');
+
+        results.querySelectorAll('.suggest-pick').forEach(function(card) {
+            card.addEventListener('click', function() {
+                priceInput.value = card.dataset.price;
+                if (currencySelect) currencySelect.value = 'INR';
+                priceInput.focus();
+            });
+        });
+    }
+
+    btn.addEventListener('click', async function() {
+        const material = parseFloat(document.getElementById('suggestMaterialCost').value);
+        const hours = parseFloat(document.getElementById('suggestHoursSpent').value);
+        const craft = craftInput.value.trim() || (categorySelect ? categorySelect.value : '');
+        if (!(material > 0) || !(hours > 0) || !craft) {
+            setStatus('Enter material cost, hours, and craft category.', true);
+            return;
+        }
+
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        results.classList.add('d-none');
+        setStatus('Asking Gemma for price suggestions...');
+
+        try {
+            const resp = await fetch('{{ url_for("producer.suggest_price") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    material_cost: material,
+                    hours_spent: hours,
+                    craft_category: craft,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                setStatus(data.error || ('Request failed (HTTP ' + resp.status + ')'), true);
+                return;
+            }
+            statusEl.classList.add('d-none');
+            renderTiers(data.tiers, data.inr_to_usd_rate);
+        } catch (e) {
+            setStatus('Network error: ' + e.message, true);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+        }
+    });
+})();
 </script>
 {% endblock %}
