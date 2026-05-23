@@ -14,10 +14,14 @@ login_manager = LoginManager()
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")
-    # Railway gives postgres:// but SQLAlchemy 2.0 requires postgresql://
+    # Railway gives postgres:// but SQLAlchemy 2.0 requires postgresql://.
+    # On Render the URL comes with the postgresql:// scheme, and SQLAlchemy 2.x
+    # tries psycopg (v3) by default; force psycopg2-binary which is what we ship.
     db_url = os.getenv("DATABASE_URL", "sqlite:///craftbridge.db")
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
 
