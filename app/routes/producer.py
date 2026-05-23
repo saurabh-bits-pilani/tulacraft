@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import Producer, Product, Lead, Message
-from app.services import gemma, translation
+from app.services import gemma, translation, social_posts
 import os
 import cloudinary
 import cloudinary.uploader
@@ -253,6 +253,30 @@ def generate_marketing_source():
         return jsonify({"source_text": source_text, "language": current_user.language})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@producer_bp.route("/generate-social-posts", methods=["POST"])
+@login_required
+def generate_social_posts():
+    data = request.get_json(silent=True) or {}
+    description = (data.get("description") or "").strip()
+    tone = (data.get("tone") or "casual").strip().lower()
+    target_language = (data.get("target_language") or current_user.language or "en").strip()
+    source_language = (data.get("source_language") or current_user.language or "en").strip()
+
+    if not description:
+        return jsonify({"error": "description is required"}), 400
+    if tone not in social_posts.TONES:
+        return jsonify({"error": f"tone must be one of {list(social_posts.TONES)}"}), 400
+
+    try:
+        posts = social_posts.generate_posts(description, tone, target_language, source_language)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": f"generation failed: {exc}"}), 502
+
+    return jsonify(posts.to_dict())
 
 
 @producer_bp.route("/translate-marketing-one", methods=["POST"])
