@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import Producer, Product, Lead, Message
-from app.services import gemma, translation
+from app.services import gemma, translation, sarvam_service
 import os
 import cloudinary
 import cloudinary.uploader
@@ -145,7 +145,44 @@ def product_new():
             return redirect(url_for("producer.product_edit", product_id=product.id, translate="1"))
         return redirect(url_for("producer.products"))
 
-    return render_template("producer/product_form.html")
+    return render_template(
+        "producer/product_form.html",
+        seller_language=current_user.language,
+        is_seller_indian=sarvam_service.is_indian_language(current_user.language),
+    )
+
+
+@producer_bp.route("/transcribe-voice", methods=["POST"])
+@login_required
+def transcribe_voice():
+    audio_file = request.files.get("audio")
+    if audio_file is None or not audio_file.filename:
+        return jsonify({"error": "audio file is required"}), 400
+
+    lang_code = (request.form.get("language") or current_user.language or "").strip()
+    if not sarvam_service.is_indian_language(lang_code):
+        return jsonify({
+            "error": f"{lang_code!r} is not a Sarvam-supported Indian language",
+        }), 400
+
+    audio_bytes = audio_file.read()
+    if not audio_bytes:
+        return jsonify({"error": "audio file is empty"}), 400
+
+    mime_type = audio_file.mimetype or "audio/webm"
+    filename = audio_file.filename or "voice.webm"
+
+    try:
+        transcript = sarvam_service.transcribe_voice(
+            audio_bytes=audio_bytes,
+            lang_code=lang_code,
+            filename=filename,
+            mime_type=mime_type,
+        )
+    except Exception as exc:
+        return jsonify({"error": f"transcription failed: {exc}"}), 502
+
+    return jsonify({"transcript": transcript, "language": lang_code})
 
 
 @producer_bp.route("/products/<int:product_id>/edit", methods=["GET", "POST"])
