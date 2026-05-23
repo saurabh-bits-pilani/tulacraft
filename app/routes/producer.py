@@ -3,8 +3,9 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app import db
-from app.models import Producer, Product, Lead, Message
-from app.services import gemma
+from app.models import Producer, Product, Lead, Message, VerificationStatus
+from app.services import gemma, digio_service
+from datetime import datetime
 import os
 import cloudinary
 import cloudinary.uploader
@@ -90,7 +91,104 @@ def logout():
 def dashboard():
     leads = Lead.query.filter_by(producer_id=current_user.id).order_by(Lead.created_at.desc()).all()
     products_count = Product.query.filter_by(producer_id=current_user.id).count()
-    return render_template("producer/dashboard.html", leads=leads, products_count=products_count)
+    verifications = VerificationStatus.query.filter_by(producer_id=current_user.id).all()
+    return render_template(
+        "producer/dashboard.html",
+        leads=leads,
+        products_count=products_count,
+        verifications=verifications,
+    )
+
+
+_TIERS = [
+    {"key": "basic",    "name": "Basic",    "price_inr": 29,  "includes": ["PAN"]},
+    {"key": "standard", "name": "Standard", "price_inr": 59,  "includes": ["PAN", "GST"]},
+    {"key": "premium",  "name": "Premium",  "price_inr": 99,  "includes": ["PAN", "GST", "Aadhaar"]},
+    {"key": "exporter", "name": "Exporter", "price_inr": 149, "includes": ["PAN", "GST", "Aadhaar", "IEC"]},
+]
+
+
+@producer_bp.route("/get-verified")
+@login_required
+def get_verified():
+    verifications = {
+        v.doc_type: v
+        for v in VerificationStatus.query.filter_by(producer_id=current_user.id).all()
+    }
+    return render_template(
+        "producer/get_verified.html",
+        tiers=_TIERS,
+        verifications=verifications,
+    )
+
+
+def _upsert_verification(doc_type: str, masked: str, verified: bool, name: str = "") -> VerificationStatus:
+    row = VerificationStatus.query.filter_by(
+        producer_id=current_user.id, doc_type=doc_type
+    ).first()
+    if row is None:
+        row = VerificationStatus(producer_id=current_user.id, doc_type=doc_type)
+        db.session.add(row)
+    row.masked_number = masked
+    row.status = "verified" if verified else "failed"
+    row.verified_name = name or None
+    row.verified_at = datetime.utcnow() if verified else None
+    db.session.commit()
+    return row
+
+
+@producer_bp.route("/verify-pan", methods=["POST"])
+@login_required
+def verify_pan():
+    data = request.get_json(silent=True) or {}
+    pan = (data.get("pan") or "").strip().upper()
+    if not digio_service.is_valid_pan(pan):
+        return jsonify({"error": "PAN format invalid"}), 400
+
+    try:
+        result = digio_service.verify_pan(pan)
+    except digio_service.DigioNotConfiguredError:
+        return jsonify({"error": "Verification provider not configured"}), 503
+    except digio_service.DigioVerificationError as exc:
+        return jsonify({"error": f"verification failed: {exc}"}), 502
+    except Exception:
+        return jsonify({"error": "verification failed"}), 502
+
+    masked = digio_service.mask_id(pan)
+    row = _upsert_verification("pan", masked, result["valid"], result.get("name", ""))
+    return jsonify({
+        "valid": result["valid"],
+        "name": result.get("name", ""),
+        "masked_number": row.masked_number,
+        "status": row.status,
+    })
+
+
+@producer_bp.route("/verify-gst", methods=["POST"])
+@login_required
+def verify_gst():
+    data = request.get_json(silent=True) or {}
+    gstin = (data.get("gstin") or "").strip().upper()
+    if not digio_service.is_valid_gstin(gstin):
+        return jsonify({"error": "GSTIN format invalid"}), 400
+
+    try:
+        result = digio_service.verify_gst(gstin)
+    except digio_service.DigioNotConfiguredError:
+        return jsonify({"error": "Verification provider not configured"}), 503
+    except digio_service.DigioVerificationError as exc:
+        return jsonify({"error": f"verification failed: {exc}"}), 502
+    except Exception:
+        return jsonify({"error": "verification failed"}), 502
+
+    masked = digio_service.mask_id(gstin)
+    row = _upsert_verification("gst", masked, result["valid"], result.get("business_name", ""))
+    return jsonify({
+        "valid": result["valid"],
+        "business_name": result.get("business_name", ""),
+        "masked_number": row.masked_number,
+        "status": row.status,
+    })
 
 
 @producer_bp.route("/products")

@@ -16,6 +16,26 @@
     </div>
 </div>
 
+<div class="card p-3 mb-4">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <strong class="me-2"><i class="bi bi-shield-check text-success"></i> Verification</strong>
+        {% set verified_rows = verifications | selectattr('status', 'equalto', 'verified') | list %}
+        {% if verified_rows %}
+            {% for v in verified_rows %}
+            <span class="badge bg-success" title="Verified {{ v.verified_at.strftime('%d %b %Y') if v.verified_at }}">
+                <i class="bi bi-patch-check-fill"></i> {{ v.doc_type | upper }}
+                {% if v.masked_number %}<small class="opacity-75 ms-1">{{ v.masked_number }}</small>{% endif %}
+            </span>
+            {% endfor %}
+        {% else %}
+            <span class="text-muted small">No badges yet — get verified to build trust with buyers.</span>
+        {% endif %}
+        <a href="{{ url_for('producer.get_verified') }}" class="btn btn-sm btn-outline-success ms-auto">
+            <i class="bi bi-shield-plus"></i> Get Verified
+        </a>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-md-3">
         <div class="card p-3 text-center">
