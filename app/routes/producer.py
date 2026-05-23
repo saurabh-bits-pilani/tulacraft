@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app import db
 from app.models import Producer, Product, Lead, Message
-from app.services import gemma
+from app.services import gemma, translation
 import os
 import cloudinary
 import cloudinary.uploader
@@ -264,7 +264,7 @@ def translate_marketing_one():
     if not text or not lang:
         return jsonify({"error": "missing fields"}), 400
     try:
-        translated = gemma.translate_one(text, lang, current_user.language)
+        translated = translation.translate_one(text, lang, current_user.language)
         return jsonify({"lang": lang, "text": translated})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

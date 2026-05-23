@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from app import db
 from app.models import Product, Message, Lead
-from app.services import gemma
+from app.services import gemma, translation
 
 api_bp = Blueprint("api", __name__)
 
@@ -25,8 +25,8 @@ def translate_one():
         return jsonify({"error": "missing fields"}), 400
     product = Product.query.filter_by(id=product_id, producer_id=current_user.id).first_or_404()
     try:
-        desc_translated = gemma.translate_one(description, lang, source_lang)
-        name_translated = gemma.translate_one(name, lang, source_lang) if name else name
+        desc_translated = translation.translate_one(description, lang, source_lang)
+        name_translated = translation.translate_one(name, lang, source_lang) if name else name
         translations = dict(product.descriptions_translated or {})
         translations[lang] = desc_translated
         product.descriptions_translated = translations
@@ -55,7 +55,7 @@ def translate_message():
         return jsonify({"error": "unauthorized"}), 403
     source_lang = data.get("source_lang", "en")
     try:
-        translated = gemma.translate_one(msg.content, target_lang, source_lang, max_tokens=512)
+        translated = translation.translate_one(msg.content, target_lang, source_lang, max_tokens=512)
         msg.translated_content = translated
         db.session.commit()
         return jsonify({"translated": translated})
@@ -72,7 +72,7 @@ def translate():
     if not text:
         return jsonify({"error": "text is required"}), 400
     try:
-        return jsonify(gemma.translate(text, languages, source))
+        return jsonify(translation.translate(text, languages, source))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
