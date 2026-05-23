@@ -1,6 +1,6 @@
 {
-  "name": "CraftBridge",
-  "short_name": "CraftBridge",
+  "name": "Tulacraft",
+  "short_name": "Tulacraft",
   "description": "Global marketplace for artisan makers",
   "start_url": "/shop",
   "display": "standalone",
