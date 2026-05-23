@@ -19,6 +19,7 @@ class Producer(UserMixin, db.Model):
     language = db.Column(db.String(10), default="en")
     bio = db.Column(db.Text)
     subscription_tier = db.Column(db.String(50), default="free")
+    seller_slug = db.Column(db.String(120), unique=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     products = db.relationship("Product", backref="producer", lazy=True)

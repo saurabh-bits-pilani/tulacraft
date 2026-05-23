@@ -5,6 +5,7 @@ from werkzeug.utils import secure_filename
 from app import db
 from app.models import Producer, Product, Lead, Message
 from app.services import gemma
+from app.services.slugs import unique_slug
 import os
 import cloudinary
 import cloudinary.uploader
@@ -49,12 +50,17 @@ def register():
             flash("Email already exists.", "danger")
             return render_template("producer/register.html")
 
+        slug = unique_slug(
+            name,
+            lambda candidate: Producer.query.filter_by(seller_slug=candidate).first() is not None,
+        )
         producer = Producer(
             name=name,
             email=email,
             password_hash=generate_password_hash(password),
             country=country,
             language=language,
+            seller_slug=slug,
         )
         db.session.add(producer)
         db.session.commit()

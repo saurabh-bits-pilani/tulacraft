@@ -28,10 +28,12 @@ def create_app():
     from app.routes.producer import producer_bp
     from app.routes.buyer import buyer_bp
     from app.routes.api import api_bp
+    from app.routes.shop import shop_bp
 
     app.register_blueprint(producer_bp, url_prefix="/producer")
     app.register_blueprint(buyer_bp, url_prefix="/shop")
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(shop_bp, url_prefix="/shop")
 
     from app.models import Producer, Buyer
 
@@ -79,6 +81,8 @@ def create_app():
         for sql in [
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS names_translated TEXT DEFAULT '{}'",
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
+            "ALTER TABLE producers ADD COLUMN IF NOT EXISTS seller_slug VARCHAR(120)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_producers_seller_slug ON producers (seller_slug)",
         ]:
             try:
                 db.session.execute(text(sql))
@@ -86,4 +90,27 @@ def create_app():
             except Exception:
                 db.session.rollback()
 
+        _backfill_seller_slugs()
+
     return app
+
+
+def _backfill_seller_slugs():
+    """Generate seller_slug for any producers missing one."""
+    from app.models import Producer
+    from app.services.slugs import unique_slug
+
+    try:
+        missing = Producer.query.filter(
+            (Producer.seller_slug.is_(None)) | (Producer.seller_slug == "")
+        ).all()
+        if not missing:
+            return
+        for producer in missing:
+            producer.seller_slug = unique_slug(
+                producer.name,
+                lambda candidate: Producer.query.filter_by(seller_slug=candidate).first() is not None,
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
