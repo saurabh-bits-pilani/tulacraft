@@ -45,6 +45,28 @@
                     </div>
 
                     <div id="marketingResult" class="d-none mt-3"></div>
+
+                    <div class="card border-primary mt-3">
+                        <div class="card-body py-3">
+                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                <strong><i class="bi bi-megaphone"></i> Social Posts</strong>
+                                <small class="text-muted">— one click → Instagram + Facebook + Twitter + hashtags in your language</small>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 align-items-center">
+                                <button type="button" class="btn btn-sm btn-outline-primary social-tone-btn" data-tone="elegant">
+                                    <i class="bi bi-suit-heart"></i> Elegant
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-success social-tone-btn" data-tone="casual">
+                                    <i class="bi bi-chat-heart"></i> Casual
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-warning social-tone-btn" data-tone="gen_z">
+                                    <i class="bi bi-lightning-fill"></i> Gen Z
+                                </button>
+                                <span id="socialStatus" class="small text-muted ms-1"></span>
+                            </div>
+                            <div id="socialResults" class="row g-3 mt-1 d-none"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="row">
@@ -385,5 +407,108 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     startBtn.style.display = 'none';
     status.textContent = 'Voice input requires Chrome browser.';
 }
+
+// Social posts
+(function() {
+    const toneBtns = document.querySelectorAll('.social-tone-btn');
+    if (!toneBtns.length) return;
+    const results = document.getElementById('socialResults');
+    const statusEl = document.getElementById('socialStatus');
+    const descField = document.getElementById('description');
+    const sellerLang = '{{ current_user.language }}';
+
+    function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'small ms-1 text-' + (kind || 'muted');
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+        });
+    }
+
+    function renderCard(label, icon, text, limit) {
+        const count = text.length;
+        const overLimit = limit && count > limit;
+        const limitTxt = limit ? (' / ' + limit) : '';
+        const colour = overLimit ? 'danger' : (limit && count > limit * 0.9 ? 'warning' : 'muted');
+        return ''
+            + '<div class="col-12">'
+            + '  <div class="card border-secondary">'
+            + '    <div class="card-header d-flex align-items-center gap-2 py-2">'
+            + '      <strong><i class="bi ' + icon + '"></i> ' + label + '</strong>'
+            + '      <span class="small text-' + colour + ' ms-2">' + count + limitTxt + ' chars</span>'
+            + '      <button type="button" class="btn btn-sm btn-outline-secondary ms-auto social-copy-btn" data-copy-text="' + escapeHtml(text) + '">'
+            + '        <i class="bi bi-clipboard"></i> Copy'
+            + '      </button>'
+            + '    </div>'
+            + '    <div class="card-body py-2"><pre class="mb-0" style="white-space:pre-wrap;font-family:inherit;font-size:0.9rem;">' + escapeHtml(text) + '</pre></div>'
+            + '  </div>'
+            + '</div>';
+    }
+
+    function attachCopyHandlers() {
+        document.querySelectorAll('.social-copy-btn').forEach(function(btn) {
+            btn.addEventListener('click', async function() {
+                try {
+                    await navigator.clipboard.writeText(btn.dataset.copyText);
+                    const original = btn.innerHTML;
+                    btn.innerHTML = '<i class="bi bi-check2"></i> Copied';
+                    setTimeout(function() { btn.innerHTML = original; }, 1500);
+                } catch (e) {
+                    window.prompt('Copy this:', btn.dataset.copyText);
+                }
+            });
+        });
+    }
+
+    toneBtns.forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            const description = descField.value.trim();
+            if (!description) {
+                setStatus('Please enter a product description first.', 'danger');
+                return;
+            }
+            const tone = btn.dataset.tone;
+            toneBtns.forEach(function(b) { b.disabled = true; });
+            const original = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            setStatus('Generating posts in ' + sellerLang.toUpperCase() + '...', 'muted');
+            results.classList.add('d-none');
+
+            try {
+                const resp = await fetch('{{ url_for("producer.generate_social_posts") }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: description,
+                        tone: tone,
+                        target_language: sellerLang,
+                        source_language: sellerLang,
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    setStatus(data.error || ('HTTP ' + resp.status), 'danger');
+                    return;
+                }
+                results.innerHTML =
+                    renderCard('Instagram', 'bi-instagram', data.instagram, data.limits.instagram)
+                    + renderCard('Facebook', 'bi-facebook', data.facebook, null)
+                    + renderCard('Twitter / X', 'bi-twitter-x', data.twitter, data.limits.twitter)
+                    + renderCard('Hashtags', 'bi-hash', data.hashtags, null);
+                results.classList.remove('d-none');
+                attachCopyHandlers();
+                setStatus('Done. Posts in ' + (data.language || sellerLang).toUpperCase() + '.', 'success');
+            } catch (e) {
+                setStatus('Network error: ' + e.message, 'danger');
+            } finally {
+                toneBtns.forEach(function(b) { b.disabled = false; });
+                btn.innerHTML = original;
+            }
+        });
+    });
+})();
 </script>
 {% endblock %}
