@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, session
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -186,6 +186,80 @@ def verify_gst():
     return jsonify({
         "valid": result["valid"],
         "business_name": result.get("business_name", ""),
+        "masked_number": row.masked_number,
+        "status": row.status,
+    })
+
+
+_AADHAAR_REF_SESSION_KEY = "aadhaar_otp_ref_id"
+
+
+@producer_bp.route("/aadhaar-send-otp", methods=["POST"])
+@login_required
+def aadhaar_send_otp():
+    """Trigger Digio Aadhaar OTP. Aadhaar number is consumed in-memory
+    only — never logged, persisted, or returned to the client."""
+    data = request.get_json(silent=True) or {}
+    aadhaar = (data.get("aadhaar_number") or "").strip()
+    if not digio_service.is_valid_aadhaar(aadhaar):
+        return jsonify({"error": "Aadhaar must be 12 digits with a valid checksum"}), 400
+
+    try:
+        result = digio_service.aadhaar_send_otp(aadhaar)
+    except digio_service.DigioNotConfiguredError:
+        return jsonify({"error": "Verification provider not configured"}), 503
+    except digio_service.DigioVerificationError as exc:
+        return jsonify({"error": f"otp request failed: {exc}"}), 502
+    except Exception:
+        return jsonify({"error": "otp request failed"}), 502
+    finally:
+        # The Aadhaar number goes out of scope as soon as this function returns.
+        pass
+
+    ref_id = result["ref_id"]
+    # Stash ref_id for the follow-up verify call. Session-only, never persisted.
+    session[_AADHAAR_REF_SESSION_KEY] = ref_id
+    # Also stash the masked tail so we can persist the right value on success
+    # without the client re-sending the full Aadhaar number.
+    session[_AADHAAR_REF_SESSION_KEY + "_masked"] = digio_service.mask_id(aadhaar)
+    return jsonify({"status": "otp_sent"})
+
+
+@producer_bp.route("/aadhaar-verify-otp", methods=["POST"])
+@login_required
+def aadhaar_verify_otp():
+    data = request.get_json(silent=True) or {}
+    otp = (data.get("otp") or "").strip()
+    if not digio_service.is_valid_otp(otp):
+        return jsonify({"error": "OTP must be 4-8 digits"}), 400
+
+    ref_id = session.get(_AADHAAR_REF_SESSION_KEY)
+    masked = session.get(_AADHAAR_REF_SESSION_KEY + "_masked")
+    if not ref_id or not masked:
+        return jsonify({"error": "No OTP session — request a new OTP"}), 400
+
+    try:
+        result = digio_service.aadhaar_verify_otp(ref_id, otp)
+    except digio_service.DigioNotConfiguredError:
+        return jsonify({"error": "Verification provider not configured"}), 503
+    except digio_service.DigioVerificationError as exc:
+        # Clear session so a stale ref_id doesn't linger.
+        session.pop(_AADHAAR_REF_SESSION_KEY, None)
+        session.pop(_AADHAAR_REF_SESSION_KEY + "_masked", None)
+        return jsonify({"error": f"verification failed: {exc}"}), 502
+    except Exception:
+        session.pop(_AADHAAR_REF_SESSION_KEY, None)
+        session.pop(_AADHAAR_REF_SESSION_KEY + "_masked", None)
+        return jsonify({"error": "verification failed"}), 502
+
+    # Always clear session ref_id after a verify attempt — single-use.
+    session.pop(_AADHAAR_REF_SESSION_KEY, None)
+    session.pop(_AADHAAR_REF_SESSION_KEY + "_masked", None)
+
+    row = _upsert_verification("aadhaar", masked, result["valid"], result.get("name", ""))
+    return jsonify({
+        "valid": result["valid"],
+        "name": result.get("name", ""),
         "masked_number": row.masked_number,
         "status": row.status,
     })
