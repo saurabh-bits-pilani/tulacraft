@@ -60,8 +60,8 @@
 <div class="row g-4">
     {% for product in products %}
     <div class="col-md-6 col-lg-4">
-        <a href="{{ url_for('buyer.product_detail', product_id=product.id) }}" class="text-decoration-none text-dark">
-            <div class="card h-100 hover-shadow">
+        <div class="card h-100 hover-shadow">
+            <a href="{{ url_for('buyer.product_detail', product_id=product.id) }}" class="text-decoration-none text-dark">
                 {% if product.images %}
                 <img src="{{ product.images[0] }}" class="card-img-top" style="height:280px;object-fit:contain;background:#f8f8f8;" alt="{{ product.name }}">
                 {% else %}
@@ -69,7 +69,7 @@
                     <i class="bi bi-image text-muted fs-1"></i>
                 </div>
                 {% endif %}
-                <div class="card-body">
+                <div class="card-body pb-2">
                     <h5 class="card-title">{{ product.names_translated.get(lang) or product.name }}</h5>
                     <p class="card-text text-muted small">
                         {{ (product.descriptions_translated.get(lang) or product.description_original or '')[:120] }}...
@@ -80,8 +80,22 @@
                     </div>
                     <small class="text-muted"><i class="bi bi-geo-alt"></i> {{ product.producer.country }}</small>
                 </div>
+            </a>
+            {% if product.producer.seller_slug %}
+            <div class="card-footer bg-white border-0 pt-0 pb-3 d-flex gap-2">
+                <a href="{{ url_for('shop.seller_shop', seller_slug=product.producer.seller_slug) }}"
+                   class="btn btn-sm btn-outline-secondary flex-grow-1">
+                    <i class="bi bi-shop"></i> Visit shop
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-secondary share-shop-btn"
+                        data-share-url="{{ url_for('shop.seller_shop', seller_slug=product.producer.seller_slug, _external=True) }}"
+                        data-share-title="{{ product.producer.name }} — Tulacraft"
+                        aria-label="Share shop">
+                    <i class="bi bi-share"></i>
+                </button>
             </div>
-        </a>
+            {% endif %}
+        </div>
     </div>
     {% endfor %}
 </div>
@@ -91,4 +105,29 @@
     <p>No products found. Try a different search.</p>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.share-shop-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const url = btn.dataset.shareUrl;
+        const title = btn.dataset.shareTitle;
+        if (navigator.share) {
+            try { await navigator.share({ title: title, url: url }); return; }
+            catch (_) { /* fall through */ }
+        }
+        try {
+            await navigator.clipboard.writeText(url);
+            const original = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-check2"></i>';
+            setTimeout(function() { btn.innerHTML = original; }, 1500);
+        } catch (_) {
+            window.prompt('Copy this link:', url);
+        }
+    });
+});
+</script>
 {% endblock %}

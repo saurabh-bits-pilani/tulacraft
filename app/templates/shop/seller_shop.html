@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ seller.name }} — Tulacraft{% endblock %}
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 col-md-10 col-lg-8 mx-auto">
+        <div class="card p-3 p-md-4">
+            <div class="d-flex flex-column flex-sm-row align-items-center align-items-sm-start gap-3">
+                <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold flex-shrink-0"
+                     style="width:80px;height:80px;background-color:#6f42c1;font-size:2rem;"
+                     aria-hidden="true">
+                    {{ (seller.name[:1] | upper) if seller.name else '?' }}
+                </div>
+                <div class="text-center text-sm-start flex-grow-1">
+                    <h2 class="mb-1">{{ seller.name }}</h2>
+                    {% if seller.country %}
+                    <p class="text-muted small mb-2"><i class="bi bi-geo-alt"></i> {{ seller.country }}</p>
+                    {% endif %}
+                    {% if seller.bio %}
+                    <p class="mb-3">{{ seller.bio }}</p>
+                    {% endif %}
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="shareShopBtn"
+                            data-share-url="{{ url_for('shop.seller_shop', seller_slug=seller.seller_slug, _external=True) }}"
+                            data-share-title="{{ seller.name }} — Tulacraft">
+                        <i class="bi bi-share"></i> <span id="shareShopLabel">Share shop</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col">
+        <h4 class="mb-0">{{ products | length }} item{{ '' if products | length == 1 else 's' }}</h4>
+    </div>
+</div>
+
+{% if products %}
+<div class="row g-3 g-md-4">
+    {% for product in products %}
+    <div class="col-12 col-sm-6 col-lg-4">
+        <a href="{{ url_for('buyer.product_detail', product_id=product.id) }}" class="text-decoration-none text-dark">
+            <div class="card h-100 hover-shadow">
+                {% if product.images %}
+                <img src="{{ product.images[0] }}" class="card-img-top"
+                     style="height:240px;object-fit:contain;background:#f8f8f8;"
+                     alt="{{ product.name }}" loading="lazy">
+                {% else %}
+                <div class="card-img-top bg-light d-flex align-items-center justify-content-center" style="height:200px;">
+                    <i class="bi bi-image text-muted fs-1"></i>
+                </div>
+                {% endif %}
+                <div class="card-body">
+                    <h5 class="card-title">{{ product.names_translated.get(lang) or product.name }}</h5>
+                    <p class="card-text text-muted small">
+                        {{ (product.descriptions_translated.get(lang) or product.description_original or '')[:120] }}...
+                    </p>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <span class="fw-bold fs-5">{% if product.price %}{{ product.price }} {{ product.currency }}{% else %}<span class="text-muted fs-6">Contact for price</span>{% endif %}</span>
+                        {% if product.category %}
+                        <span class="badge bg-light text-dark border">{{ product.category }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card p-5 text-center text-muted">
+    <i class="bi bi-box-seam fs-1 mb-3"></i>
+    <p>This maker hasn't listed any products yet.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const btn = document.getElementById('shareShopBtn');
+    if (!btn) return;
+    const label = document.getElementById('shareShopLabel');
+    const url = btn.dataset.shareUrl;
+    const title = btn.dataset.shareTitle;
+
+    btn.addEventListener('click', async function() {
+        if (navigator.share) {
+            try {
+                await navigator.share({ title: title, url: url });
+                return;
+            } catch (e) {
+                // user cancelled or share unsupported — fall through to clipboard
+            }
+        }
+        try {
+            await navigator.clipboard.writeText(url);
+            const original = label.textContent;
+            label.textContent = 'Link copied!';
+            setTimeout(function() { label.textContent = original; }, 2000);
+        } catch (e) {
+            window.prompt('Copy this link:', url);
+        }
+    });
+})();
+</script>
+{% endblock %}
