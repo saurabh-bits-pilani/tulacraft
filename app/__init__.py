@@ -1,4 +1,4 @@
-from flask import Flask, redirect, url_for, session
+from flask import Flask, redirect, url_for, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
 from dotenv import load_dotenv
@@ -50,6 +50,14 @@ def create_app():
     @app.route("/")
     def index():
         return redirect(url_for("buyer.shop"))
+
+    @app.route("/sw.js")
+    def service_worker():
+        """Serve the SW from origin root so its scope covers the whole app."""
+        response = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+        response.headers["Service-Worker-Allowed"] = "/"
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.context_processor
     def inject_unread_counts():

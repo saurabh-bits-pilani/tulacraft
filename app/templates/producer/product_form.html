@@ -9,7 +9,13 @@
                 <div class="mb-3">
                     <label class="form-label fw-bold">Photos</label>
                     <input type="file" name="photos" id="photosInput" class="form-control" multiple accept="image/*">
-                    <small class="text-muted">You can select multiple photos at once. Click a photo to set it as primary.</small>
+                    <input type="file" id="cameraCaptureInput" accept="image/*" capture="environment" class="d-none">
+                    <div class="d-flex gap-2 mt-2 flex-wrap align-items-center">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="cameraCaptureBtn">
+                            <i class="bi bi-camera"></i> Take Photo
+                        </button>
+                        <small class="text-muted">Pick multiple from gallery above, or snap a single photo. Click any preview to set it as primary.</small>
+                    </div>
                     <input type="hidden" name="primary_photo" id="primaryPhotoInput" value="0">
                     <div id="photoPreview" class="d-flex flex-wrap gap-2 mt-2"></div>
                 </div>
@@ -161,6 +167,27 @@ document.getElementById('photosInput').addEventListener('change', function() {
         reader.readAsDataURL(file);
     });
 });
+
+// Camera capture: append the snapped photo into the main photos input so
+// the existing preview/upload logic handles it without changes.
+(function() {
+    const photosInput = document.getElementById('photosInput');
+    const cameraBtn = document.getElementById('cameraCaptureBtn');
+    const cameraInput = document.getElementById('cameraCaptureInput');
+    if (!cameraBtn || !cameraInput || !photosInput) return;
+
+    cameraBtn.addEventListener('click', function() { cameraInput.click(); });
+
+    cameraInput.addEventListener('change', function() {
+        if (!this.files || !this.files.length) return;
+        const dt = new DataTransfer();
+        Array.from(photosInput.files || []).forEach(function(f) { dt.items.add(f); });
+        Array.from(this.files).forEach(function(f) { dt.items.add(f); });
+        photosInput.files = dt.files;
+        photosInput.dispatchEvent(new Event('change', { bubbles: true }));
+        this.value = '';
+    });
+})();
 
 // Loading state on save
 let clickedBtn = null;
